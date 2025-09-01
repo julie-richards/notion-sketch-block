@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Notion Sketchpad — Single File</title>
+<style>
+  :root { --bar-height:44px; }
+  html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  #bar{display:flex;gap:.5rem;align-items:center;padding:.5rem;border-bottom:1px solid #ddd;font-size:14px;height:var(--bar-height);box-sizing:border-box;background:#fafafa}
+  #wrap{height:calc(100% - var(--bar-height));}
+  button,input[type=range],select{font:inherit;padding:.35rem .6rem;border-radius:6px;border:1px solid #ccc;background:white}
+  button:active{transform:translateY(1px)}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair;background:white}
+  .spacer{flex:1}
+  label{display:flex;align-items:center;gap:.4rem}
+</style>
+</head>
+<body>
+  <div id="bar">
+    <button id="penBtn">Pen</button>
+    <button id="eraserBtn">Eraser</button>
+    <label>Size <input id="size" type="range" min="1" max="60" value="4" /></label>
+    <input id="color" type="color" value="#111111" />
+    <button id="undoBtn">Undo</button>
+    <button id="clearBtn">Clear</button>
+    <div class="spacer"></div>
+    <button id="saveBtn">Save PNG</button>
+    <button id="copyBtn">Copy to Clipboard</button>
+  </div>
+  <div id="wrap"><canvas id="c"></canvas></div>
+
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d', { willReadFrequently: true });
+let drawing = false, last = null, erasing = false;
+let strokes = [], undone = [];
+const key = 'notion-sketch-autosave-v1';
+
+const colorEl = document.getElementById('color');
+const sizeEl = document.getElementById('size');
+
+function resize(){
+  const r = c.getBoundingClientRect();
+  const w = Math.max(800, Math.round(r.width * devicePixelRatio));
+  const h = Math.max(600, Math.round((window.innerHeight - 44) * devicePixelRatio));
+  const tmp = document.createElement('canvas');
+  tmp.width = c.width || w; tmp.height = c.height || h;
+  tmp.getContext('2d').drawImage(c,0,0);
+  c.width = w; c.height = h;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.drawImage(tmp,0,0);
+  redraw();
+}
+window.addEventListener('resize', ()=>setTimeout(resize,150));
+
+function screenToCanvas(e){
+  const rect = c.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * devicePixelRatio;
+  const y = (e.clientY - rect.top) * devicePixelRatio;
+  return {x,y, pressure: e.pressure ?? 0.5};
+}
+function pointerDown(e){
+  if(e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  drawing = true; undone.length = 0;
+  last = screenToCanvas(e);
+  const stroke = { erasing, color: colorEl.value, size: +sizeEl.value, pts: [ last ] };
+  strokes.push(stroke);
+}
+function pointerMove(e){
+  if(!drawing) return;
+  const p = screenToCanvas(e);
+  const s = strokes[strokes.length-1];
+  s.pts.push(p);
+  drawStrokeSegment(s, last, p);
+  last = p;
+}
+function pointerUp(){ if(!drawing) return; drawing=false; last=null; autosave(); }
+
+function drawStrokeSegment(s, a, b){
+  if(!a||!b) return;
+  ctx.save();
+  if (s.erasing) { ctx.globalCompositeOperation='destination-out'; ctx.strokeStyle='rgba(0,0,0,1)'; }
+  else { ctx.globalCompositeOperation='source-over'; ctx.strokeStyle=s.color; }
+  ctx.lineWidth = Math.max(1, s.size * (1+(b.pressure||0.5))) * devicePixelRatio;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  ctx.restore();
+}
+function redraw(){
+  ctx.save(); ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); ctx.restore();
+  for(const s of strokes){ for(let i=1;i<s.pts.length;i++) drawStrokeSegment(s,s.pts[i-1],s.pts[i]); }
+}
+function autosave(){ try{ localStorage.setItem(key,JSON.stringify(strokes)); }catch{} }
+function load(){ const raw=localStorage.getItem(key); if(raw){strokes=JSON.parse(
